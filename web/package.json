@@ -1,0 +1,25 @@
+{
+  "name": "husky",
+  "version": "1.0.0",
+  "description": "husky",
+  "repository": "husky",
+  "main": "server.js",
+  "scripts": {
+    "test": "exit 0",
+    "lint": "npx eslint --ext .js app.js server.js --fix"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "express": "^4.17.1",
+    "nunjucks": "^3.2.3"
+  },
+  "devDependencies": {
+    "eslint": "^8.23.0",
+    "eslint-config-standard": "^17.0.0",
+    "eslint-plugin-import": "^2.26.0",
+    "eslint-plugin-n": "^15.2.5",
+    "eslint-plugin-promise": "^6.0.1"
+  }
+}

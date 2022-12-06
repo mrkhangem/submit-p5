@@ -1,0 +1,182 @@
+version: 2.1
+
+commands:
+  build:
+    parameters:
+      pro-env:
+        type: string
+    steps:
+      - run: echo "Start build <<parameters.pro-env>> image"
+      - checkout
+      - run:
+          name: Build and push image
+          command: |
+            docker login -u ${DOCKERHUB_USERNAME} -p ${DOCKERHUB_PASSWORD}
+            . make.sh <<parameters.pro-env>>
+            docker push ${DOCKERHUB_USERNAME}/husky:<<parameters.pro-env>>
+            docker tag ${DOCKERHUB_USERNAME}/husky:<<parameters.pro-env>> ${DOCKERHUB_USERNAME}/husky:latest
+            docker push ${DOCKERHUB_USERNAME}/husky:latest
+orbs:
+  aws-eks: circleci/aws-eks@2.2.0
+  kubernetes: circleci/kubernetes@1.3.1
+
+jobs:
+  lint:
+    docker:
+      - image: node:16.3-slim
+    steps:
+      - checkout
+      - run:
+          name: Install node_modules
+          command: |
+            cd web
+            npm install
+      - run: 
+          name: npm lint
+          command: |
+            cd web
+            npm run lint
+      - run:
+          name: Install hadolint
+          command: |
+            apt-get update && apt-get install -y wget
+            wget -O /bin/hadolint https://github.com/hadolint/hadolint/releases/download/v1.16.3/hadolint-Linux-x86_64 &&\
+            chmod +x /bin/hadolint
+      - run: 
+         name: Dockerfile lint
+         command: |
+            cd web
+            hadolint Dockerfile --ignore  DL3006
+  
+  build-blue:
+    machine: true
+    steps:
+      - build:
+          pro-env: blue
+
+  build-green:
+    machine: true
+    steps:
+      - build:
+          pro-env: green
+  
+      
+  create-cluster:
+    parameters:
+      custom_checkout:
+        type: string
+        default: ""
+    docker:
+      - image: cimg/python:3.7
+    steps:
+      - when:
+          condition: <<parameters.custom_checkout>>
+          steps:
+            - run: echo "Cluster created"
+
+      - unless:
+          condition: <<parameters.custom_checkout>>
+          steps:
+            - checkout
+            - aws-eks/create-cluster:
+                cluster-name: udacitydevops-${CIRCLE_WORKFLOW_ID:0:7}
+                node-type: 't3.medium'
+                nodes-max: 5
+                nodes-min: 2
+
+  create-deployment:
+    docker:
+      - image: cimg/python:3.7
+    steps:
+      - checkout
+      - kubernetes/install
+      - aws-eks/update-kubeconfig-with-authenticator:
+          cluster-name: 'udacitydevops-${CIRCLE_WORKFLOW_ID:0:7}'
+          install-kubectl: true
+      - kubernetes/create-or-update-resource:
+          get-rollout-status: true
+          resource-file-path: webInfras.yml
+          resource-name: deployment/husky
+
+  check-cluster:
+    docker:
+      - image: cimg/python:3.7
+    steps:
+      - kubernetes/install
+      - aws-eks/update-kubeconfig-with-authenticator:
+          cluster-name: 'udacitydevops-${CIRCLE_WORKFLOW_ID:0:7}'
+      - run:
+          name: Check cluster
+          command: |
+            kubectl get svc
+            kubectl get nodes
+            kubectl get deployment
+  
+  delete-resource:
+    docker:
+      - image: cimg/python:3.7
+    steps:
+      - kubernetes/install
+      - aws-eks/update-kubeconfig-with-authenticator:
+          cluster-name: 'udacitydevops-${CIRCLE_WORKFLOW_ID:0:7}'
+          install-kubectl: true
+      - kubernetes/delete-resource:
+          resource-names: husky
+          resource-types: deployment
+          wait: true
+        
+workflows:
+  default:
+    jobs:
+      - lint
+
+      - build-blue:
+          requires:
+            - lint
+
+      - create-cluster:
+          requires:
+            - build-blue
+
+      - create-deployment:
+          requires:
+            - create-cluster
+
+      - check-cluster:
+          requires:
+            - create-deployment
+
+      - holding-build-green:
+          type: approval
+          requires:
+            - lint
+
+      - build-green:
+          requires:
+            - holding-build-green
+
+      - aws-eks/update-container-image:
+          get-rollout-status: true
+          cluster-name: 'udacitydevops-${CIRCLE_WORKFLOW_ID:0:7}'
+          container-image-updates: husky=kemabc123/husky
+          resource-name: deployment/husky
+          requires:
+            - build-green
+
+      - check-cluster:
+          requires:
+            - aws-eks/update-container-image
+
+      - holding-clean:
+          type: approval
+          requires:
+            - aws-eks/update-container-image
+
+      - delete-resource:
+          requires:
+            - holding-clean
+
+      - aws-eks/delete-cluster:
+          cluster-name: udacitydevops-${CIRCLE_WORKFLOW_ID:0:7}
+          requires:
+            - delete-resource
