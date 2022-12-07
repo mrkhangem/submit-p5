@@ -1,7 +1,7 @@
 const nunjucks = require('nunjucks')
 const express = require('express')
 
-const app = express()x
+const app = express()
 
 nunjucks.configure('views', {
   express: app,
